@@ -1,0 +1,268 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { supabase } from '@/app/lib/supabase';
+
+interface ImageRecord {
+  id: string;
+  filename: string;
+  url: string;
+  title: string;
+  description: string;
+  created_at: string; // Database table uses snake_case
+}
+
+export default function Home() {
+  const [images, setImages] = useState<ImageRecord[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<ImageRecord | null>(null);
+
+  // Form states
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+
+  useEffect(() => {
+    fetchImages();
+  }, []);
+
+  const fetchImages = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('images')
+        .select('*')
+        .order('created_at', { ascending: false }); // 최신 순 정렬
+
+      if (error) throw error;
+      setImages(data as ImageRecord[]);
+    } catch (e) {
+      console.error('Failed to fetch images:', e);
+    }
+  };
+
+  const handleUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!file) return;
+    
+    setUploading(true);
+
+    try {
+      // 1. 파일 이름 안전하게 변환
+      const fileExt = file.name.split('.').pop() || 'png';
+      const cleanFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+      const uniqueFilename = `${Date.now()}-${Math.random().toString(36).substring(7)}_${cleanFileName}`;
+      const bucketName = 'gallery';
+
+      // 2. Storage에 이미지 업로드
+      const { error: uploadError } = await supabase.storage
+        .from(bucketName)
+        .upload(uniqueFilename, file, {
+          cacheControl: '3600',
+          upsert: false
+        });
+
+      if (uploadError) throw uploadError;
+
+      // 3. 업로드된 파일의 Public URL 가져오기
+      const { data: { publicUrl } } = supabase.storage
+        .from(bucketName)
+        .getPublicUrl(uniqueFilename);
+
+      // 4. Database에 메타데이터 저장
+      const { error: dbError } = await supabase
+        .from('images')
+        .insert([{
+          filename: uniqueFilename,
+          url: publicUrl,
+          title: title,
+          description: description
+        }]);
+
+      if (dbError) {
+         // DB 저장 실패 시 스토리지 파일 정리
+         await supabase.storage.from(bucketName).remove([uniqueFilename]);
+         throw dbError;
+      }
+
+      // 업로드 완료 후 새로고침 및 폼 초기화
+      fetchImages();
+      setTitle('');
+      setDescription('');
+      setFile(null);
+      const fileInput = document.getElementById('file-input') as HTMLInputElement;
+      if (fileInput) fileInput.value = '';
+      
+    } catch (e: any) {
+      console.error('Upload Error:', e);
+      alert(`업로드 중 오류가 발생했습니다: ${e.message || '알 수 없는 오류'}`);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDelete = async (id: string, filename: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // 모달 켜짐 방지
+    if (!confirm('정말 이 이미지를 삭제하시겠습니까?')) return;
+
+    try {
+      // 1. Storage에서 원본 파일 삭제
+      const bucketName = 'gallery';
+      const { error: storageError } = await supabase.storage
+        .from(bucketName)
+        .remove([filename]);
+      
+      if (storageError) console.warn('스토리지 삭제 중 문제 발생:', storageError);
+
+      // 2. Database에서 기록 삭제
+      const { error: dbError } = await supabase
+        .from('images')
+        .delete()
+        .eq('id', id);
+
+      if (dbError) throw dbError;
+
+      // 화면에서 이미지 제거
+      setImages(prev => prev.filter(img => img.id !== id));
+      if (selectedImage?.id === id) setSelectedImage(null);
+
+    } catch (e: any) {
+      console.error('Delete Error:', e);
+      alert('삭제 중 오류가 발생했습니다.');
+    }
+  };
+
+  return (
+    <main className="min-h-screen p-8 bg-gray-50 text-gray-900 font-sans">
+      <div className="max-w-6xl mx-auto">
+        <h1 className="text-3xl font-bold mb-8 text-center text-gray-800">나만의 클라우드 갤러리 ☁️</h1>
+        
+        {/* Upload Form */}
+        <form onSubmit={handleUpload} className="bg-white p-6 rounded-lg shadow-md mb-10 max-w-xl mx-auto border border-gray-100">
+          <h2 className="text-xl font-semibold mb-4 border-b pb-2">새 이미지 업로드</h2>
+          
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">사진 선택 <span className="text-red-500">*</span></label>
+            <input 
+              id="file-input"
+              type="file" 
+              accept="image/*" 
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+              required
+              className="w-full border border-gray-300 rounded p-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-50 cursor-pointer"
+            />
+          </div>
+
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">제목 (선택)</label>
+            <input 
+              type="text" 
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="예: 부산 여행"
+              className="w-full border border-gray-300 rounded p-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">설명 (선택)</label>
+            <textarea 
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="사진에 대한 설명을 적어주세요."
+              rows={2}
+              className="w-full border border-gray-300 rounded p-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+            />
+          </div>
+
+          <button 
+            type="submit" 
+            disabled={uploading || !file}
+            className="w-full bg-blue-600 text-white font-medium py-2 rounded shadow hover:bg-blue-700 transition disabled:bg-gray-400 disabled:cursor-not-allowed"
+          >
+            {uploading ? '업로드 중...' : '이미지 저장하기'}
+          </button>
+        </form>
+
+        {/* Gallery Grid */}
+        {images.length === 0 ? (
+          <p className="text-center text-gray-500 bg-white p-8 rounded shadow-sm border border-gray-100">아직 등록된 이미지가 없습니다. 첫 사진을 올려보세요!</p>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+            {images.map((img) => (
+              <div 
+                key={img.id} 
+                className="bg-white rounded-lg overflow-hidden shadow-sm hover:shadow-lg transition-shadow duration-300 cursor-pointer group flex flex-col border border-gray-100"
+                onClick={() => setSelectedImage(img)}
+              >
+                <div className="aspect-square bg-gray-200 relative overflow-hidden">
+                  <img 
+                    src={img.url} 
+                    alt={img.title || img.filename} 
+                    className="w-full h-full object-cover group-hover:scale-105 transition duration-300" 
+                    loading="lazy"
+                  />
+                  {/* Delete Button (visible on hover) */}
+                  <button
+                    onClick={(e) => handleDelete(img.id, img.filename, e)}
+                    className="absolute top-2 right-2 bg-red-500 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition shadow hover:bg-red-600"
+                    title="삭제"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                </div>
+                <div className="p-4 flex-1">
+                  <h3 className="font-semibold text-lg truncate text-gray-800">{img.title || '제목 없음'}</h3>
+                  <p className="text-gray-500 text-sm mt-1 line-clamp-2">{img.description || '설명이 없습니다.'}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Modal Overlay */}
+      {selectedImage && (
+        <div 
+          className="fixed inset-0 bg-black/85 flex flex-col items-center justify-center z-50 p-4 sm:p-8"
+          onClick={() => setSelectedImage(null)}
+        >
+          <button 
+            className="absolute top-4 right-4 text-white hover:text-gray-300 transition p-2 bg-black/20 rounded-full"
+            onClick={() => setSelectedImage(null)}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+          
+          <div 
+            className="max-w-5xl w-full flex flex-col items-center justify-center bg-transparent"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-full flex justify-center max-h-[70vh] mb-6">
+              <img 
+                src={selectedImage.url} 
+                alt={selectedImage.title} 
+                className="max-w-full max-h-full object-contain shadow-2xl rounded"
+              />
+            </div>
+            
+            <div className="w-full max-w-3xl bg-white/10 backdrop-blur-md p-6 rounded-xl text-white border border-white/20 shadow-xl">
+              <h2 className="text-2xl font-bold mb-2">{selectedImage.title || '제목 없음'}</h2>
+              {selectedImage.description ? (
+                <p className="text-gray-200 whitespace-pre-wrap leading-relaxed">{selectedImage.description}</p>
+              ) : (
+                <p className="text-gray-400 italic">설명이 없습니다.</p>
+              )}
+              <p className="text-gray-400 text-xs mt-4">
+                업로드: {new Date(selectedImage.created_at).toLocaleString()}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+    </main>
+  );
+}
