@@ -92,9 +92,10 @@ export default function Home() {
       const fileInput = document.getElementById('file-input') as HTMLInputElement;
       if (fileInput) fileInput.value = '';
       
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error('Upload Error:', e);
-      alert(`업로드 중 오류가 발생했습니다: ${e.message || '알 수 없는 오류'}`);
+      const errorMessage = e instanceof Error ? e.message : '알 수 없는 오류';
+      alert(`업로드 중 오류가 발생했습니다: ${errorMessage}`);
     } finally {
       setUploading(false);
     }
@@ -125,7 +126,7 @@ export default function Home() {
       setImages(prev => prev.filter(img => img.id !== id));
       if (selectedImage?.id === id) setSelectedImage(null);
 
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error('Delete Error:', e);
       alert('삭제 중 오류가 발생했습니다.');
     }
