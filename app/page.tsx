@@ -135,7 +135,7 @@ export default function Home() {
   return (
     <main className="min-h-screen p-8 bg-gray-50 text-gray-900 font-sans">
       <div className="max-w-6xl mx-auto">
-        <h1 className="text-3xl font-bold mb-8 text-center text-gray-800">나만의 클라우드 갤러리 ☁️</h1>
+        <h1 className="text-3xl font-bold mb-8 text-center text-gray-800">신혼밥 갤러리 🍱💖</h1>
         
         {/* Upload Form */}
         <form onSubmit={handleUpload} className="bg-white p-6 rounded-lg shadow-md mb-10 max-w-xl mx-auto border border-gray-100">
